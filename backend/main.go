@@ -64,7 +64,7 @@ func main() {
 		AllowOriginFunc: func(origin string) bool {
 			return true // Accept any origin
 		},
-		// AllowOrigins:     []string{"http://192.168.1.51:3000", "http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:5173"},
+		// AllowOrigins:     []string{"http://backend:3000", "http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:5173"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization", "accept", "origin", "Cache-Control", "X-Requested-With"},
 		AllowCredentials: true,
@@ -87,7 +87,7 @@ func main() {
 	log.Printf("Starting server on port %s", port)
 
 	if err := router.Run(":" + port); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+		log.Fatalf("Failed to start server1: %v", err)
 	}
 }
 
