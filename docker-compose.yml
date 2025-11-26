@@ -42,7 +42,7 @@ services:
     image: docker23xis/alteqiachef-frontend:latest  # Changed from build to image
     container_name: pos-frontend
     environment:
-      - VITE_API_URL=http://localhost:8080
+      - VITE_API_URL=http://localhost:8080/api/v1
     ports:
       - "3000:3000"
     depends_on:
