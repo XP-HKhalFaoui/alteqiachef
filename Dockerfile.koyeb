@@ -1,0 +1,38 @@
+## Multi-stage Dockerfile intended for Koyeb deployments
+# This builds the Go backend in a builder stage and produces a small final image.
+# Usage on Koyeb: when creating a Service, select "Dockerfile" and set the path
+# to `Dockerfile.koyeb` (or to `backend/Dockerfile` if you prefer).
+
+# ---------- Build stage ----------
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+
+# Install git for `go mod` and any other build-time needs
+RUN apk add --no-cache git
+
+# Copy go modules
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
+
+# Copy backend source
+COPY backend/ .
+
+# Build the binary
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
+
+# ---------- Final stage ----------
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /root/
+
+# Copy the binary from builder
+COPY --from=builder /app/main .
+
+# Expose the port the Go app listens on (default in code: 8080)
+EXPOSE 8080
+
+# Default command
+CMD ["./main"]
