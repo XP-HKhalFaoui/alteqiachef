@@ -1,0 +1,55 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: pos-postgres
+    environment:
+      POSTGRES_DB: pos_system
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - pos-network
+    restart: unless-stopped
+
+  backend:
+    image: docker23xis/alteqiachef-backend:latest
+    container_name: pos-backend
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres123
+      - DB_NAME=pos_system
+      - PORT=8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    networks:
+      - pos-network
+    restart: unless-stopped
+
+  frontend:
+    image: docker23xis/alteqiachef-frontend:latest
+    container_name: pos-frontend
+    environment:
+      - VITE_API_URL=http://localhost:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - pos-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  pos-network:
+    driver: bridge
