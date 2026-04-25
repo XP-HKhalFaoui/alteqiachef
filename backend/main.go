@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strings"
 
 	"pos-backend/internal/api"
 	"pos-backend/internal/database"
@@ -56,15 +57,46 @@ func main() {
 	// Initialize Gin router
 	gin.SetMode(getEnv("GIN_MODE", "release"))
 	router := gin.New()
+	// Disable trailing-slash redirects — they return 302 without CORS headers,
+	// causing browsers to block the response before the redirect is followed.
+	router.RedirectTrailingSlash = false
+	router.RedirectFixedPath = false
+
+	// Build allowed origins: always allow localhost variants + any extra origins
+	// configured via CORS_ORIGINS (comma-separated) for test environments like Cloud Shell.
+	defaultOrigins := []string{
+		"http://localhost:3000", "http://localhost:3001", "http://localhost:3002",
+		"http://localhost:3003", "http://localhost:5173",
+		"http://192.168.1.59:5173",
+		"http://backend:3000",
+	}
+	extraOrigins := getEnv("CORS_ORIGINS", "")
+	if extraOrigins != "" {
+		for _, o := range strings.Split(extraOrigins, ",") {
+			o = strings.TrimSpace(o)
+			if o != "" {
+				defaultOrigins = append(defaultOrigins, o)
+			}
+		}
+	}
+	allowedOrigins := defaultOrigins
 
 	// Add middleware
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
 	router.Use(cors.New(cors.Config{
 		AllowOriginFunc: func(origin string) bool {
-			return true // Accept any origin
+			// If CORS_ORIGINS contains "*" allow everything (useful for quick local testing)
+			if extraOrigins == "*" {
+				return true
+			}
+			for _, allowed := range allowedOrigins {
+				if allowed == origin {
+					return true
+				}
+			}
+			return false
 		},
-		// AllowOrigins:     []string{"http://backend:3000", "http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://localhost:5173"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization", "accept", "origin", "Cache-Control", "X-Requested-With"},
 		AllowCredentials: true,

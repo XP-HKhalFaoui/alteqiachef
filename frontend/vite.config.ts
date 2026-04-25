@@ -24,11 +24,11 @@ export default defineConfig({
       interval: 1000,    // ADD THIS - Poll every 1 second
     },
     hmr: {
-      host: 'localhost',  // ADD THIS - For HMR to work properly
+      clientPort: 5173,
     },
     proxy: {
       '/api': {
-        target: process.env.VITE_API_URL ,//|| 'http://localhost:8080'
+        target: process.env.VITE_BACKEND_URL || 'http://localhost:8080',
         changeOrigin: true,
         secure: false,
       },
