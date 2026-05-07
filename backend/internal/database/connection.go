@@ -2,79 +2,109 @@ package database
 
 import (
 	"database/sql"
+	"embed"
 	"fmt"
 	"log"
-	"time"
+	"os"
+	"path/filepath"
 
-	_ "github.com/lib/pq"
+	_ "modernc.org/sqlite"
 )
 
-type Config struct {
-	Host     string
-	Port     string
-	User     string
-	Password string
-	DBName   string
-	SSLMode  string
-}
+//go:embed migrations/*.sql
+var migrationFS embed.FS
 
-func Connect(config Config) (*sql.DB, error) {
-	dsn := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		config.Host, config.Port, config.User, config.Password, config.DBName, config.SSLMode,
-	)
+//go:embed seed/seed.sql
+var seedSQL string
 
-	db, err := sql.Open("postgres", dsn)
+func Connect(dbPath string) (*sql.DB, error) {
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
+		return nil, fmt.Errorf("failed to create database directory: %w", err)
+	}
+
+	isNew := false
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		isNew = true
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database connection: %w", err)
+		return nil, fmt.Errorf("failed to open SQLite database: %w", err)
 	}
 
-	// Configure connection pool
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(10)
-	db.SetConnMaxLifetime(5 * time.Minute)
+	// Single writer connection prevents "database is locked" errors
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 
-	// Test the connection
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+		return nil, fmt.Errorf("failed to set WAL mode: %w", err)
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
+		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
-	log.Println("Database connection established successfully")
+	if err := runMigrations(db); err != nil {
+		return nil, fmt.Errorf("migration failed: %w", err)
+	}
+
+	if isNew {
+		log.Println("New database — seeding demo data")
+		if err := runSeed(db); err != nil {
+			log.Printf("Warning: seed failed: %v", err)
+		}
+	}
+
+	log.Printf("SQLite database ready at %s", dbPath)
 	return db, nil
 }
 
-func IsConnectionError(err error) bool {
-	if err == nil {
-		return false
-	}
-	
-	// Check for common database connection errors
-	errorString := err.Error()
-	connectionErrors := []string{
-		"connection refused",
-		"no such host",
-		"timeout",
-		"connection reset",
-		"broken pipe",
-		"network is unreachable",
+func runMigrations(db *sql.DB) error {
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+		version INTEGER PRIMARY KEY,
+		applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+	)`); err != nil {
+		return err
 	}
 
-	for _, connErr := range connectionErrors {
-		if len(errorString) > 0 && len(connErr) > 0 {
-			// Simple substring check
-			found := false
-			for i := 0; i <= len(errorString)-len(connErr); i++ {
-				if errorString[i:i+len(connErr)] == connErr {
-					found = true
-					break
-				}
-			}
-			if found {
-				return true
-			}
-		}
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		return err
 	}
-	
-	return false
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		var version int
+		fmt.Sscanf(entry.Name(), "%d", &version)
+
+		var exists int
+		db.QueryRow("SELECT COUNT(*) FROM schema_migrations WHERE version = ?", version).Scan(&exists)
+		if exists > 0 {
+			continue
+		}
+
+		content, err := migrationFS.ReadFile("migrations/" + entry.Name())
+		if err != nil {
+			return fmt.Errorf("read migration %s: %w", entry.Name(), err)
+		}
+
+		if _, err := db.Exec(string(content)); err != nil {
+			return fmt.Errorf("apply migration %d: %w", version, err)
+		}
+
+		db.Exec("INSERT INTO schema_migrations (version) VALUES (?)", version)
+		log.Printf("Applied migration %d (%s)", version, entry.Name())
+	}
+	return nil
 }
 
+func runSeed(db *sql.DB) error {
+	_, err := db.Exec(seedSQL)
+	return err
+}
+
+// Ping checks the database connection is alive
+func Ping(db *sql.DB) error {
+	return db.Ping()
+}

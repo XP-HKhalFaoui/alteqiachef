@@ -25,14 +25,13 @@ func getKitchenOrders(db *sql.DB) gin.HandlerFunc {
 		status := c.DefaultQuery("status", "all")
 
 		query := `
-			SELECT DISTINCT o.id::text, o.order_number, o.table_id::text, o.order_type, o.status, 
-		       o.created_at, o.customer_name,
-		       t.table_number
+			SELECT DISTINCT o.id, o.order_number, o.table_id, o.order_type, o.status,
+			       o.created_at, o.customer_name,
+			       t.table_number
 			FROM orders o
 			LEFT JOIN dining_tables t ON o.table_id = t.id
-			WHERE o.status IN ('pending', 'confirmed', 'preparing', 'ready') AND o.created_at::date = CURRENT_DATE
+			WHERE o.status IN ('pending', 'confirmed', 'preparing', 'ready') AND date(o.created_at) = date('now')
 		`
-		// WHERE o.status IN ('pending', 'confirmed', 'preparing', 'ready') AND o.created_at::date = CURRENT_DATE
 
 		if status != "all" {
 			query += ` AND o.status = '` + status + `'`
@@ -111,9 +110,9 @@ func updateOrderItemStatus(db *sql.DB) gin.HandlerFunc {
 
 		// Update order item status
 		_, err := db.Exec(`
-			UPDATE order_items 
-			SET status = $1, updated_at = CURRENT_TIMESTAMP 
-			WHERE id = $2 AND order_id = $3
+			UPDATE order_items
+			SET status = ?, updated_at = datetime('now')
+			WHERE id = ? AND order_id = ?
 		`, req.Status, itemID, orderID)
 
 		if err != nil {

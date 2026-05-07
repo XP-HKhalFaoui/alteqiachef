@@ -12,63 +12,39 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	_ "github.com/lib/pq"
 )
 
 func main() {
-	// Load environment variables
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using environment variables")
 	}
 
-	// Database configuration
-	dbConfig := database.Config{
-		Host:     getEnv("DB_HOST", "localhost"),
-		Port:     getEnv("DB_PORT", "5432"),
-		User:     getEnv("DB_USER", "postgres"),
-		Password: getEnv("DB_PASSWORD", "postgres123"),
-		DBName:   getEnv("DB_NAME", "pos_system"),
-		SSLMode:  getEnv("DB_SSLMODE", "disable"),
-	}
+	// SQLite database path — Tauri sets ALTEQIA_DB_PATH to the app data directory
+	dbPath := getEnv("ALTEQIA_DB_PATH", "./pos.db")
 
-	// dbConfig := database.Config{
-	// 	Host:     "localhost",
-	// 	Port:     "5432",
-	// 	User:     "postgres",
-	// 	Password: "postgres123",
-	// 	DBName:   "pos_system",
-	// 	SSLMode:  "disable",
-	// }
-
-	// Initialize database connection
-	db, err := database.Connect(dbConfig)
+	db, err := database.Connect(dbPath)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 	defer db.Close()
 
-	// Test database connection
-	if err := db.Ping(); err != nil {
+	if err := database.Ping(db); err != nil {
 		log.Fatalf("Failed to ping database: %v", err)
 	}
 
 	log.Println("Successfully connected to database")
 
-	// Initialize Gin router
 	gin.SetMode(getEnv("GIN_MODE", "release"))
 	router := gin.New()
-	// Disable trailing-slash redirects — they return 302 without CORS headers,
-	// causing browsers to block the response before the redirect is followed.
 	router.RedirectTrailingSlash = false
 	router.RedirectFixedPath = false
 
-	// Build allowed origins: always allow localhost variants + any extra origins
-	// configured via CORS_ORIGINS (comma-separated) for test environments like Cloud Shell.
 	defaultOrigins := []string{
 		"http://localhost:3000", "http://localhost:3001", "http://localhost:3002",
 		"http://localhost:3003", "http://localhost:5173",
 		"http://192.168.1.59:5173",
-		"http://backend:3000",
+		"tauri://localhost",          // Tauri v2 webview (Windows/Linux)
+		"https://tauri.localhost",    // Tauri v2 webview (macOS)
 	}
 	extraOrigins := getEnv("CORS_ORIGINS", "")
 	if extraOrigins != "" {
@@ -81,12 +57,10 @@ func main() {
 	}
 	allowedOrigins := defaultOrigins
 
-	// Add middleware
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
 	router.Use(cors.New(cors.Config{
 		AllowOriginFunc: func(origin string) bool {
-			// If CORS_ORIGINS contains "*" allow everything (useful for quick local testing)
 			if extraOrigins == "*" {
 				return true
 			}
@@ -102,24 +76,21 @@ func main() {
 		AllowCredentials: true,
 	}))
 
-	// Add authentication middleware to protected routes
 	authMiddleware := middleware.AuthMiddleware()
 
-	// Health check endpoint
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "healthy", "message": "POS API is running"})
 	})
 
-	// Initialize API routes
 	apiRoutes := router.Group("/api/v1")
 	api.SetupRoutes(apiRoutes, db, authMiddleware)
 
-	// Start server
-	port := getEnv("PORT", "8080")
+	// Default port 17432 to avoid conflicts with common services
+	port := getEnv("PORT", "17432")
 	log.Printf("Starting server on port %s", port)
 
 	if err := router.Run(":" + port); err != nil {
-		log.Fatalf("Failed to start server1: %v", err)
+		log.Fatalf("Failed to start server: %v", err)
 	}
 }
 

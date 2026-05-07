@@ -7,7 +7,6 @@ import (
 	"pos-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 type TableHandler struct {
@@ -18,14 +17,13 @@ func NewTableHandler(db *sql.DB) *TableHandler {
 	return &TableHandler{db: db}
 }
 
-// GetTables retrieves all dining tables
 func (h *TableHandler) GetTables(c *gin.Context) {
 	location := c.Query("location")
 	occupiedOnly := c.Query("occupied_only") == "true"
 	availableOnly := c.Query("available_only") == "true"
 
 	queryBuilder := `
-		SELECT t.id, t.table_number, t.seating_capacity, t.location, t.is_occupied, 
+		SELECT t.id, t.table_number, t.seating_capacity, t.location, t.is_occupied,
 		       t.created_at, t.updated_at,
 		       o.id as order_id, o.order_number, o.customer_name, o.status as order_status,
 		       o.created_at as order_created_at, o.total_amount
@@ -35,18 +33,16 @@ func (h *TableHandler) GetTables(c *gin.Context) {
 	`
 
 	var args []interface{}
-	argIndex := 0
 
 	if location != "" {
-		argIndex++
-		queryBuilder += ` AND t.location ILIKE $` + string(rune(argIndex+'0'))
+		queryBuilder += ` AND t.location LIKE ?`
 		args = append(args, "%"+location+"%")
 	}
 
 	if occupiedOnly {
-		queryBuilder += ` AND t.is_occupied = true`
+		queryBuilder += ` AND t.is_occupied = 1`
 	} else if availableOnly {
-		queryBuilder += ` AND t.is_occupied = false`
+		queryBuilder += ` AND t.is_occupied = 0`
 	}
 
 	queryBuilder += ` ORDER BY t.table_number ASC`
@@ -66,7 +62,7 @@ func (h *TableHandler) GetTables(c *gin.Context) {
 	for rows.Next() {
 		var table models.DiningTable
 		var orderID, orderNumber, customerName, orderStatus sql.NullString
-		var orderCreatedAt sql.NullTime
+		var orderCreatedAt sql.NullString
 		var totalAmount sql.NullFloat64
 
 		err := rows.Scan(
@@ -83,31 +79,6 @@ func (h *TableHandler) GetTables(c *gin.Context) {
 			return
 		}
 
-		// Create a map to hold table data including current order info
-		tableData := map[string]interface{}{
-			"id":               table.ID,
-			"table_number":     table.TableNumber,
-			"seating_capacity": table.SeatingCapacity,
-			"location":         table.Location,
-			"is_occupied":      table.IsOccupied,
-			"created_at":       table.CreatedAt,
-			"updated_at":       table.UpdatedAt,
-			"current_order":    nil,
-		}
-
-		// Add current order info if available
-		if orderID.Valid {
-			tableData["current_order"] = map[string]interface{}{
-				"id":            orderID.String,
-				"order_number":  orderNumber.String,
-				"customer_name": customerName.String,
-				"status":        orderStatus.String,
-				"created_at":    orderCreatedAt.Time,
-				"total_amount":  totalAmount.Float64,
-			}
-		}
-
-		// Convert to table struct for consistent response
 		tables = append(tables, table)
 	}
 
@@ -118,27 +89,18 @@ func (h *TableHandler) GetTables(c *gin.Context) {
 	})
 }
 
-// GetTable retrieves a specific table by ID
 func (h *TableHandler) GetTable(c *gin.Context) {
-	tableID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.APIResponse{
-			Success: false,
-			Message: "Invalid table ID",
-			Error:   stringPtr("invalid_uuid"),
-		})
-		return
-	}
+	tableID := c.Param("id")
 
 	var table models.DiningTable
 
 	query := `
 		SELECT id, table_number, seating_capacity, location, is_occupied, created_at, updated_at
 		FROM dining_tables
-		WHERE id = $1
+		WHERE id = ?
 	`
 
-	err = h.db.QueryRow(query, tableID).Scan(
+	err := h.db.QueryRow(query, tableID).Scan(
 		&table.ID, &table.TableNumber, &table.SeatingCapacity, &table.Location,
 		&table.IsOccupied, &table.CreatedAt, &table.UpdatedAt,
 	)
@@ -161,13 +123,12 @@ func (h *TableHandler) GetTable(c *gin.Context) {
 		return
 	}
 
-	// Get current active order for this table
 	var currentOrder *models.Order
 	orderQuery := `
-		SELECT o.id, o.order_number, o.customer_name, o.order_type, o.status, 
+		SELECT o.id, o.order_number, o.customer_name, o.order_type, o.status,
 		       o.subtotal, o.tax_amount, o.total_amount, o.created_at, o.updated_at
 		FROM orders o
-		WHERE o.table_id = $1 AND o.status NOT IN ('completed', 'cancelled')
+		WHERE o.table_id = ? AND o.status NOT IN ('completed', 'cancelled')
 		ORDER BY o.created_at DESC
 		LIMIT 1
 	`
@@ -180,12 +141,8 @@ func (h *TableHandler) GetTable(c *gin.Context) {
 
 	if err == nil {
 		currentOrder = &order
-	} else if err != sql.ErrNoRows {
-		// Log error but don't fail the request
-		// fmt.Printf("Warning: Failed to fetch current order for table: %v\n", err)
 	}
 
-	// Create response with current order info
 	response := map[string]interface{}{
 		"id":               table.ID,
 		"table_number":     table.TableNumber,
@@ -204,10 +161,9 @@ func (h *TableHandler) GetTable(c *gin.Context) {
 	})
 }
 
-// GetTablesByLocation retrieves tables grouped by location
 func (h *TableHandler) GetTablesByLocation(c *gin.Context) {
 	query := `
-		SELECT t.id, t.table_number, t.seating_capacity, t.location, t.is_occupied, 
+		SELECT t.id, t.table_number, t.seating_capacity, t.location, t.is_occupied,
 		       t.created_at, t.updated_at,
 		       o.id as order_id, o.order_number, o.customer_name, o.status as order_status
 		FROM dining_tables t
@@ -226,7 +182,6 @@ func (h *TableHandler) GetTablesByLocation(c *gin.Context) {
 	}
 	defer rows.Close()
 
-	// Group tables by location
 	locationMap := make(map[string][]models.DiningTable)
 
 	for rows.Next() {
@@ -248,7 +203,6 @@ func (h *TableHandler) GetTablesByLocation(c *gin.Context) {
 			return
 		}
 
-		// Set location
 		if location.Valid {
 			table.Location = &location.String
 		} else {
@@ -260,7 +214,6 @@ func (h *TableHandler) GetTablesByLocation(c *gin.Context) {
 		locationMap[locationKey] = append(locationMap[locationKey], table)
 	}
 
-	// Convert map to structured response
 	var locations []map[string]interface{}
 	for locationName, tables := range locationMap {
 		locations = append(locations, map[string]interface{}{
@@ -276,13 +229,12 @@ func (h *TableHandler) GetTablesByLocation(c *gin.Context) {
 	})
 }
 
-// GetTableStatus retrieves the status overview of all tables
 func (h *TableHandler) GetTableStatus(c *gin.Context) {
 	query := `
-		SELECT 
+		SELECT
 		    COUNT(*) as total_tables,
-		    COUNT(CASE WHEN is_occupied = true THEN 1 END) as occupied_tables,
-		    COUNT(CASE WHEN is_occupied = false THEN 1 END) as available_tables,
+		    COUNT(CASE WHEN is_occupied = 1 THEN 1 END) as occupied_tables,
+		    COUNT(CASE WHEN is_occupied = 0 THEN 1 END) as available_tables,
 		    COALESCE(location, 'General') as location
 		FROM dining_tables
 		GROUP BY COALESCE(location, 'General')
@@ -344,4 +296,3 @@ func (h *TableHandler) GetTableStatus(c *gin.Context) {
 		Data:    response,
 	})
 }
-

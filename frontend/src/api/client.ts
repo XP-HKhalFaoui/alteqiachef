@@ -427,6 +427,18 @@ class APIClient {
   isAuthenticated(): boolean {
     return !!this.getAuthToken();
   }
+
+  async waitForBackend(maxAttempts = 20, delayMs = 300): Promise<void> {
+    for (let i = 0; i < maxAttempts; i++) {
+      try {
+        await this.client.get('/health', { timeout: 1000 });
+        return;
+      } catch {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+    // Proceed anyway — backend may still be starting
+  }
 }
 
 // Create and export a singleton instance

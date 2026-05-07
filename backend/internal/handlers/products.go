@@ -8,7 +8,6 @@ import (
 	"pos-backend/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 type ProductHandler struct {
@@ -19,9 +18,7 @@ func NewProductHandler(db *sql.DB) *ProductHandler {
 	return &ProductHandler{db: db}
 }
 
-// GetProducts retrieves all products with pagination and filtering
 func (h *ProductHandler) GetProducts(c *gin.Context) {
-	// Parse query parameters
 	page := 1
 	perPage := 50
 	categoryID := c.Query("category_id")
@@ -42,9 +39,8 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 
 	offset := (page - 1) * perPage
 
-	// Build query with filters
 	queryBuilder := `
-		SELECT p.id, p.category_id, p.name, p.description, p.price, p.image_url, 
+		SELECT p.id, p.category_id, p.name, p.description, p.price, p.image_url,
 		       p.barcode, p.sku, p.is_available, p.preparation_time, p.sort_order,
 		       p.created_at, p.updated_at,
 		       c.name as category_name, c.color as category_color
@@ -54,29 +50,24 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 	`
 
 	var args []interface{}
-	argIndex := 0
 
 	if categoryID != "" {
-		if _, err := uuid.Parse(categoryID); err == nil {
-			argIndex++
-			queryBuilder += ` AND p.category_id = $` + strconv.Itoa(argIndex)
-			args = append(args, categoryID)
-		}
+		queryBuilder += ` AND p.category_id = ?`
+		args = append(args, categoryID)
 	}
 
 	if available == "true" {
-		queryBuilder += ` AND p.is_available = true`
+		queryBuilder += ` AND p.is_available = 1`
 	} else if available == "false" {
-		queryBuilder += ` AND p.is_available = false`
+		queryBuilder += ` AND p.is_available = 0`
 	}
 
 	if search != "" {
-		argIndex++
-		queryBuilder += ` AND (p.name ILIKE $` + strconv.Itoa(argIndex) + ` OR p.description ILIKE $` + strconv.Itoa(argIndex) + `)`
-		args = append(args, "%"+search+"%")
+		// SQLite LIKE is case-insensitive for ASCII — each ? needs its own arg
+		queryBuilder += ` AND (p.name LIKE ? OR p.description LIKE ?)`
+		args = append(args, "%"+search+"%", "%"+search+"%")
 	}
 
-	// Count total records
 	countQuery := "SELECT COUNT(*) FROM (" + queryBuilder + ") as count_query"
 	var total int
 	if err := h.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
@@ -88,15 +79,8 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 		return
 	}
 
-	// Add ordering and pagination
-	queryBuilder += ` ORDER BY p.sort_order ASC, p.name ASC`
-	argIndex++
-	queryBuilder += ` LIMIT $` + strconv.Itoa(argIndex)
-	args = append(args, perPage)
-	
-	argIndex++
-	queryBuilder += ` OFFSET $` + strconv.Itoa(argIndex)
-	args = append(args, offset)
+	queryBuilder += ` ORDER BY p.sort_order ASC, p.name ASC LIMIT ? OFFSET ?`
+	args = append(args, perPage, offset)
 
 	rows, err := h.db.Query(queryBuilder, args...)
 	if err != nil {
@@ -130,8 +114,7 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 			return
 		}
 
-		// Add category info if available
-		if categoryName.Valid {
+		if categoryName.Valid && product.CategoryID != nil {
 			product.Category = &models.Category{
 				ID:    *product.CategoryID,
 				Name:  categoryName.String,
@@ -157,32 +140,23 @@ func (h *ProductHandler) GetProducts(c *gin.Context) {
 	})
 }
 
-// GetProduct retrieves a specific product by ID
 func (h *ProductHandler) GetProduct(c *gin.Context) {
-	productID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.APIResponse{
-			Success: false,
-			Message: "Invalid product ID",
-			Error:   stringPtr("invalid_uuid"),
-		})
-		return
-	}
+	productID := c.Param("id")
 
 	var product models.Product
 	var categoryName, categoryColor sql.NullString
 
 	query := `
-		SELECT p.id, p.category_id, p.name, p.description, p.price, p.image_url, 
+		SELECT p.id, p.category_id, p.name, p.description, p.price, p.image_url,
 		       p.barcode, p.sku, p.is_available, p.preparation_time, p.sort_order,
 		       p.created_at, p.updated_at,
 		       c.name as category_name, c.color as category_color
 		FROM products p
 		LEFT JOIN categories c ON p.category_id = c.id
-		WHERE p.id = $1
+		WHERE p.id = ?
 	`
 
-	err = h.db.QueryRow(query, productID).Scan(
+	err := h.db.QueryRow(query, productID).Scan(
 		&product.ID, &product.CategoryID, &product.Name, &product.Description,
 		&product.Price, &product.ImageURL, &product.Barcode, &product.SKU,
 		&product.IsAvailable, &product.PreparationTime, &product.SortOrder,
@@ -208,8 +182,7 @@ func (h *ProductHandler) GetProduct(c *gin.Context) {
 		return
 	}
 
-	// Add category info if available
-	if categoryName.Valid {
+	if categoryName.Valid && product.CategoryID != nil {
 		product.Category = &models.Category{
 			ID:    *product.CategoryID,
 			Name:  categoryName.String,
@@ -224,19 +197,18 @@ func (h *ProductHandler) GetProduct(c *gin.Context) {
 	})
 }
 
-// GetCategories retrieves all categories
 func (h *ProductHandler) GetCategories(c *gin.Context) {
 	activeOnly := c.Query("active_only") == "true"
-	
+
 	query := `
 		SELECT id, name, description, color, sort_order, is_active, created_at, updated_at
 		FROM categories
 	`
-	
+
 	if activeOnly {
-		query += ` WHERE is_active = true`
+		query += ` WHERE is_active = 1`
 	}
-	
+
 	query += ` ORDER BY sort_order ASC, name ASC`
 
 	rows, err := h.db.Query(query)
@@ -277,32 +249,22 @@ func (h *ProductHandler) GetCategories(c *gin.Context) {
 	})
 }
 
-// GetProductsByCategory retrieves all products in a specific category
 func (h *ProductHandler) GetProductsByCategory(c *gin.Context) {
-	categoryID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.APIResponse{
-			Success: false,
-			Message: "Invalid category ID",
-			Error:   stringPtr("invalid_uuid"),
-		})
-		return
-	}
-
+	categoryID := c.Param("id")
 	availableOnly := c.Query("available_only") == "true"
 
 	query := `
-		SELECT p.id, p.category_id, p.name, p.description, p.price, p.image_url, 
+		SELECT p.id, p.category_id, p.name, p.description, p.price, p.image_url,
 		       p.barcode, p.sku, p.is_available, p.preparation_time, p.sort_order,
 		       p.created_at, p.updated_at,
 		       c.name as category_name, c.color as category_color
 		FROM products p
 		JOIN categories c ON p.category_id = c.id
-		WHERE p.category_id = $1
+		WHERE p.category_id = ?
 	`
 
 	if availableOnly {
-		query += ` AND p.is_available = true`
+		query += ` AND p.is_available = 1`
 	}
 
 	query += ` ORDER BY p.sort_order ASC, p.name ASC`
@@ -339,8 +301,7 @@ func (h *ProductHandler) GetProductsByCategory(c *gin.Context) {
 			return
 		}
 
-		// Add category info
-		if categoryName.Valid {
+		if categoryName.Valid && product.CategoryID != nil {
 			product.Category = &models.Category{
 				ID:    *product.CategoryID,
 				Name:  categoryName.String,
@@ -357,4 +318,3 @@ func (h *ProductHandler) GetProductsByCategory(c *gin.Context) {
 		Data:    products,
 	})
 }
-

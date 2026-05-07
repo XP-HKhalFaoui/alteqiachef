@@ -12,7 +12,6 @@ import (
 	"pos-backend/internal/repository"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 )
 
 type OrderHandler struct {
@@ -23,9 +22,7 @@ func NewOrderHandler(repo repository.OrderRepository) *OrderHandler {
 	return &OrderHandler{repo: repo}
 }
 
-// GetOrders retrieves all orders with pagination and filtering
 func (h *OrderHandler) GetOrders(c *gin.Context) {
-	// Parse query parameters
 	page := 1
 	perPage := 20
 	status := c.Query("status")
@@ -45,7 +42,6 @@ func (h *OrderHandler) GetOrders(c *gin.Context) {
 
 	offset := (page - 1) * perPage
 
-	// Use repository to fetch orders
 	orders, total, err := h.repo.ListOrders(c.Request.Context(), status, orderType, perPage, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
@@ -71,14 +67,13 @@ func (h *OrderHandler) GetOrders(c *gin.Context) {
 	})
 }
 
-// GetOrder retrieves a specific order by ID
 func (h *OrderHandler) GetOrder(c *gin.Context) {
-	orderID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
+	orderID := c.Param("id")
+	if orderID == "" {
 		c.JSON(http.StatusBadRequest, models.APIResponse{
 			Success: false,
 			Message: "Invalid order ID",
-			Error:   stringPtr("invalid_uuid"),
+			Error:   stringPtr("invalid_id"),
 		})
 		return
 	}
@@ -108,7 +103,6 @@ func (h *OrderHandler) GetOrder(c *gin.Context) {
 	})
 }
 
-// CreateOrder creates a new order
 func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	userID, _, _, ok := middleware.GetUserFromContext(c)
 	if !ok {
@@ -139,10 +133,8 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	// Generate order number
 	orderNumber := h.generateOrderNumber()
 
-	// Use repository to create order
 	orderID, err := h.repo.CreateOrder(c.Request.Context(), req, userID, orderNumber)
 	if err != nil {
 		if strings.Contains(err.Error(), "product_not_found") {
@@ -178,14 +170,13 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	})
 }
 
-// UpdateOrderStatus updates the status of an order
 func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
-	orderID, err := uuid.Parse(c.Param("id"))
-	if err != nil {
+	orderID := c.Param("id")
+	if orderID == "" {
 		c.JSON(http.StatusBadRequest, models.APIResponse{
 			Success: false,
 			Message: "Invalid order ID",
-			Error:   stringPtr("invalid_uuid"),
+			Error:   stringPtr("invalid_id"),
 		})
 		return
 	}
@@ -210,7 +201,6 @@ func (h *OrderHandler) UpdateOrderStatus(c *gin.Context) {
 		return
 	}
 
-	// Validate status
 	validStatuses := []string{"pending", "confirmed", "preparing", "ready", "served", "completed", "cancelled"}
 	isValidStatus := false
 	for _, status := range validStatuses {

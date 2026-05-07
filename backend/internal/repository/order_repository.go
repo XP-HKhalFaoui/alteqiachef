@@ -13,22 +13,21 @@ import (
 // OrderRepository defines behaviour for order persistence
 type OrderRepository interface {
 	ListOrders(ctx context.Context, status, orderType string, limit, offset int) ([]models.Order, int, error)
-	GetOrderByID(ctx context.Context, id uuid.UUID) (*models.Order, error)
-	CreateOrder(ctx context.Context, req models.CreateOrderRequest, userID uuid.UUID, orderNumber string) (uuid.UUID, error)
-	UpdateOrderStatus(ctx context.Context, orderID uuid.UUID, newStatus string, changedBy uuid.UUID, notes *string) error
+	GetOrderByID(ctx context.Context, id string) (*models.Order, error)
+	CreateOrder(ctx context.Context, req models.CreateOrderRequest, userID string, orderNumber string) (string, error)
+	UpdateOrderStatus(ctx context.Context, orderID string, newStatus string, changedBy string, notes *string) error
 }
 
-// PostgresOrderRepository is an implementation of OrderRepository using *sql.DB
-type PostgresOrderRepository struct {
+// SQLiteOrderRepository is an implementation of OrderRepository using *sql.DB (SQLite)
+type SQLiteOrderRepository struct {
 	db *sql.DB
 }
 
-func NewPostgresOrderRepository(db *sql.DB) *PostgresOrderRepository {
-	return &PostgresOrderRepository{db: db}
+func NewPostgresOrderRepository(db *sql.DB) *SQLiteOrderRepository {
+	return &SQLiteOrderRepository{db: db}
 }
 
-// ListOrders returns a slice of orders and the total count
-func (r *PostgresOrderRepository) ListOrders(ctx context.Context, status, orderType string, limit, offset int) ([]models.Order, int, error) {
+func (r *SQLiteOrderRepository) ListOrders(ctx context.Context, status, orderType string, limit, offset int) ([]models.Order, int, error) {
 	queryBuilder := `
         SELECT DISTINCT o.id, o.order_number, o.table_id, o.user_id, o.customer_name,
                o.order_type, o.status, o.subtotal, o.tax_amount, o.discount_amount,
@@ -42,15 +41,12 @@ func (r *PostgresOrderRepository) ListOrders(ctx context.Context, status, orderT
     `
 
 	var args []interface{}
-	argIndex := 0
 	if status != "" {
-		argIndex++
-		queryBuilder += fmt.Sprintf(" AND o.status = $%d", argIndex)
+		queryBuilder += " AND o.status = ?"
 		args = append(args, status)
 	}
 	if orderType != "" {
-		argIndex++
-		queryBuilder += fmt.Sprintf(" AND o.order_type = $%d", argIndex)
+		queryBuilder += " AND o.order_type = ?"
 		args = append(args, orderType)
 	}
 
@@ -60,12 +56,8 @@ func (r *PostgresOrderRepository) ListOrders(ctx context.Context, status, orderT
 		return nil, 0, err
 	}
 
-	argIndex++
-	queryBuilder += fmt.Sprintf(" ORDER BY o.created_at DESC LIMIT $%d", argIndex)
-	args = append(args, limit)
-	argIndex++
-	queryBuilder += fmt.Sprintf(" OFFSET $%d", argIndex)
-	args = append(args, offset)
+	queryBuilder += " ORDER BY o.created_at DESC LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
 
 	rows, err := r.db.QueryContext(ctx, queryBuilder, args...)
 	if err != nil {
@@ -103,7 +95,6 @@ func (r *PostgresOrderRepository) ListOrders(ctx context.Context, status, orderT
 			}
 		}
 
-		// load items
 		if err := r.loadOrderItems(ctx, &order); err != nil {
 			return nil, 0, err
 		}
@@ -117,7 +108,7 @@ func (r *PostgresOrderRepository) ListOrders(ctx context.Context, status, orderT
 	return orders, total, nil
 }
 
-func (r *PostgresOrderRepository) GetOrderByID(ctx context.Context, id uuid.UUID) (*models.Order, error) {
+func (r *SQLiteOrderRepository) GetOrderByID(ctx context.Context, id string) (*models.Order, error) {
 	var order models.Order
 	var tableNumber, tableLocation sql.NullString
 	var username, firstName, lastName sql.NullString
@@ -131,7 +122,7 @@ func (r *PostgresOrderRepository) GetOrderByID(ctx context.Context, id uuid.UUID
         FROM orders o
         LEFT JOIN dining_tables t ON o.table_id = t.id
         LEFT JOIN users u ON o.user_id = u.id
-        WHERE o.id = $1
+        WHERE o.id = ?
     `
 
 	if err := r.db.QueryRowContext(ctx, query, id).Scan(
@@ -168,24 +159,23 @@ func (r *PostgresOrderRepository) GetOrderByID(ctx context.Context, id uuid.UUID
 	return &order, nil
 }
 
-func (r *PostgresOrderRepository) CreateOrder(ctx context.Context, req models.CreateOrderRequest, userID uuid.UUID, orderNumber string) (uuid.UUID, error) {
+func (r *SQLiteOrderRepository) CreateOrder(ctx context.Context, req models.CreateOrderRequest, userID string, orderNumber string) (string, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return uuid.Nil, err
+		return "", err
 	}
 	defer tx.Rollback()
 
-	orderID := uuid.New()
+	orderID := uuid.New().String()
 
-	// calculate subtotal
 	var subtotal float64
 	for _, item := range req.Items {
 		var price float64
-		if err := tx.QueryRowContext(ctx, "SELECT price FROM products WHERE id = $1 AND is_available = true", item.ProductID).Scan(&price); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT price FROM products WHERE id = ? AND is_available = 1", item.ProductID).Scan(&price); err != nil {
 			if err == sql.ErrNoRows {
-				return uuid.Nil, fmt.Errorf("product_not_found: %w", err)
+				return "", fmt.Errorf("product_not_found: %w", err)
 			}
-			return uuid.Nil, err
+			return "", err
 		}
 		subtotal += price * float64(item.Quantity)
 	}
@@ -197,44 +187,44 @@ func (r *PostgresOrderRepository) CreateOrder(ctx context.Context, req models.Cr
 	orderQuery := `
         INSERT INTO orders (id, order_number, table_id, user_id, customer_name, order_type, status,
                            subtotal, tax_amount, discount_amount, total_amount, notes)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `
 
 	if _, err := tx.ExecContext(ctx, orderQuery, orderID, orderNumber, req.TableID, userID, req.CustomerName,
 		req.OrderType, "pending", subtotal, taxAmount, 0, totalAmount, req.Notes); err != nil {
-		return uuid.Nil, err
+		return "", err
 	}
 
 	for _, item := range req.Items {
 		var price float64
-		if err := tx.QueryRowContext(ctx, "SELECT price FROM products WHERE id = $1", item.ProductID).Scan(&price); err != nil {
-			return uuid.Nil, err
+		if err := tx.QueryRowContext(ctx, "SELECT price FROM products WHERE id = ?", item.ProductID).Scan(&price); err != nil {
+			return "", err
 		}
 		totalPrice := price * float64(item.Quantity)
-		itemID := uuid.New()
+		itemID := uuid.New().String()
 		itemQuery := `
             INSERT INTO order_items (id, order_id, product_id, quantity, unit_price, total_price, special_instructions)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         `
 		if _, err := tx.ExecContext(ctx, itemQuery, itemID, orderID, item.ProductID, item.Quantity, price, totalPrice, item.SpecialInstructions); err != nil {
-			return uuid.Nil, err
+			return "", err
 		}
 	}
 
 	if req.OrderType == "dine_in" && req.TableID != nil {
-		if _, err := tx.ExecContext(ctx, "UPDATE dining_tables SET is_occupied = true WHERE id = $1", *req.TableID); err != nil {
-			return uuid.Nil, err
+		if _, err := tx.ExecContext(ctx, "UPDATE dining_tables SET is_occupied = 1 WHERE id = ?", *req.TableID); err != nil {
+			return "", err
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return uuid.Nil, err
+		return "", err
 	}
 
 	return orderID, nil
 }
 
-func (r *PostgresOrderRepository) UpdateOrderStatus(ctx context.Context, orderID uuid.UUID, newStatus string, changedBy uuid.UUID, notes *string) error {
+func (r *SQLiteOrderRepository) UpdateOrderStatus(ctx context.Context, orderID string, newStatus string, changedBy string, notes *string) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -242,55 +232,50 @@ func (r *PostgresOrderRepository) UpdateOrderStatus(ctx context.Context, orderID
 	defer tx.Rollback()
 
 	var currentStatus string
-	if err := tx.QueryRowContext(ctx, "SELECT status FROM orders WHERE id = $1", orderID).Scan(&currentStatus); err != nil {
-		if err == sql.ErrNoRows {
-			return err
-		}
+	if err := tx.QueryRowContext(ctx, "SELECT status FROM orders WHERE id = ?", orderID).Scan(&currentStatus); err != nil {
 		return err
 	}
 
-	updateQuery := "UPDATE orders SET status = $1, updated_at = CURRENT_TIMESTAMP"
+	updateQuery := "UPDATE orders SET status = ?, updated_at = datetime('now')"
 	if newStatus == "served" {
-		updateQuery += ", served_at = CURRENT_TIMESTAMP"
+		updateQuery += ", served_at = datetime('now')"
 	} else if newStatus == "completed" {
-		updateQuery += ", completed_at = CURRENT_TIMESTAMP"
+		updateQuery += ", completed_at = datetime('now')"
 	}
-	updateQuery += " WHERE id = $2"
+	updateQuery += " WHERE id = ?"
 
 	if _, err := tx.ExecContext(ctx, updateQuery, newStatus, orderID); err != nil {
 		return err
 	}
 
+	historyID := uuid.New().String()
 	historyQuery := `
-        INSERT INTO order_status_history (order_id, previous_status, new_status, changed_by, notes)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO order_status_history (id, order_id, previous_status, new_status, changed_by, notes)
+        VALUES (?, ?, ?, ?, ?, ?)
     `
-	if _, err := tx.ExecContext(ctx, historyQuery, orderID, currentStatus, newStatus, changedBy, notes); err != nil {
+	if _, err := tx.ExecContext(ctx, historyQuery, historyID, orderID, currentStatus, newStatus, changedBy, notes); err != nil {
 		return err
 	}
 
 	if newStatus == "completed" || newStatus == "cancelled" {
-		if _, err := tx.ExecContext(ctx, `
+		tx.ExecContext(ctx, `
             UPDATE dining_tables
-            SET is_occupied = false
-            WHERE id IN (SELECT table_id FROM orders WHERE id = $1 AND table_id IS NOT NULL)
-        `, orderID); err != nil {
-			// non-fatal: ignore here
-		}
+            SET is_occupied = 0
+            WHERE id IN (SELECT table_id FROM orders WHERE id = ? AND table_id IS NOT NULL)
+        `, orderID)
 	}
 
 	return tx.Commit()
 }
 
-// loadOrderItems and loadOrderPayments are internal helpers
-func (r *PostgresOrderRepository) loadOrderItems(ctx context.Context, order *models.Order) error {
+func (r *SQLiteOrderRepository) loadOrderItems(ctx context.Context, order *models.Order) error {
 	query := `
         SELECT oi.id, oi.product_id, oi.quantity, oi.unit_price, oi.total_price,
                oi.special_instructions, oi.status, oi.created_at, oi.updated_at,
                p.name, p.description, p.price, p.preparation_time
         FROM order_items oi
         JOIN products p ON oi.product_id = p.id
-        WHERE oi.order_id = $1
+        WHERE oi.order_id = ?
         ORDER BY oi.created_at
     `
 
@@ -344,14 +329,14 @@ func (r *PostgresOrderRepository) loadOrderItems(ctx context.Context, order *mod
 	return nil
 }
 
-func (r *PostgresOrderRepository) loadOrderPayments(ctx context.Context, order *models.Order) error {
+func (r *SQLiteOrderRepository) loadOrderPayments(ctx context.Context, order *models.Order) error {
 	query := `
         SELECT p.id, p.payment_method, p.amount, p.reference_number, p.status,
                p.processed_by, p.processed_at, p.created_at,
                u.username, u.first_name, u.last_name
         FROM payments p
         LEFT JOIN users u ON p.processed_by = u.id
-        WHERE p.order_id = $1
+        WHERE p.order_id = ?
         ORDER BY p.created_at
     `
 

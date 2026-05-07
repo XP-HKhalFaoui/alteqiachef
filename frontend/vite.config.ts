@@ -5,6 +5,8 @@ import tsconfigPaths from 'vite-tsconfig-paths'
 import path from 'path'
 
 export default defineConfig({
+  clearScreen: false,
+  envPrefix: ['VITE_', 'TAURI_'],
   plugins: [
     react(),
     TanStackRouterVite(),
@@ -17,18 +19,11 @@ export default defineConfig({
   },
   server: {
     host: '0.0.0.0',
-    port: 5173,  // Change from 3000 to 5173 (Vite default)
+    port: 5173,
     strictPort: true,
-    watch: {
-      usePolling: true,  // ADD THIS - Critical for Docker
-      interval: 1000,    // ADD THIS - Poll every 1 second
-    },
-    hmr: {
-      clientPort: 5173,
-    },
     proxy: {
       '/api': {
-        target: process.env.VITE_BACKEND_URL || 'http://localhost:8080',
+        target: process.env.VITE_BACKEND_URL || 'http://localhost:17432',
         changeOrigin: true,
         secure: false,
       },

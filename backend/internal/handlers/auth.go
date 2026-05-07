@@ -19,7 +19,6 @@ func NewAuthHandler(db *sql.DB) *AuthHandler {
 	return &AuthHandler{db: db}
 }
 
-// Login handles user authentication
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req models.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -31,7 +30,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Validate input
 	if req.Username == "" || req.Password == "" {
 		c.JSON(http.StatusBadRequest, models.APIResponse{
 			Success: false,
@@ -41,14 +39,13 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Get user from database
 	var user models.User
 	query := `
-		SELECT id, username, email, password_hash, first_name, last_name, role, is_active, created_at, updated_at 
-		FROM users 
-		WHERE username = $1 AND is_active = true
+		SELECT id, username, email, password_hash, first_name, last_name, role, is_active, created_at, updated_at
+		FROM users
+		WHERE username = ? AND is_active = 1
 	`
-	
+
 	err := h.db.QueryRow(query, req.Username).Scan(
 		&user.ID, &user.Username, &user.Email, &user.PasswordHash,
 		&user.FirstName, &user.LastName, &user.Role, &user.IsActive,
@@ -73,7 +70,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Verify password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		c.JSON(http.StatusUnauthorized, models.APIResponse{
 			Success: false,
@@ -83,7 +79,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Generate JWT token
 	token, err := middleware.GenerateToken(&user)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.APIResponse{
@@ -94,7 +89,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	// Return successful login response
 	c.JSON(http.StatusOK, models.APIResponse{
 		Success: true,
 		Message: "Login successful",
@@ -105,7 +99,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	})
 }
 
-// GetCurrentUser returns the current authenticated user
 func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	userID, _, _, ok := middleware.GetUserFromContext(c)
 	if !ok {
@@ -117,14 +110,13 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
-	// Get user from database
 	var user models.User
 	query := `
-		SELECT id, username, email, first_name, last_name, role, is_active, created_at, updated_at 
-		FROM users 
-		WHERE id = $1
+		SELECT id, username, email, first_name, last_name, role, is_active, created_at, updated_at
+		FROM users
+		WHERE id = ?
 	`
-	
+
 	err := h.db.QueryRow(query, userID).Scan(
 		&user.ID, &user.Username, &user.Email,
 		&user.FirstName, &user.LastName, &user.Role, &user.IsActive,
@@ -156,18 +148,13 @@ func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
 	})
 }
 
-// Logout handles user logout (in a stateless JWT system, this is mainly client-side)
 func (h *AuthHandler) Logout(c *gin.Context) {
-	// In a stateless JWT system, logout is handled client-side by removing the token
-	// For additional security, you could implement a token blacklist here
 	c.JSON(http.StatusOK, models.APIResponse{
 		Success: true,
 		Message: "Logout successful",
 	})
 }
 
-// Helper function to create string pointer
 func stringPtr(s string) *string {
 	return &s
 }
-

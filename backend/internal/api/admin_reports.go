@@ -15,17 +15,17 @@ func getDashboardStats(db *sql.DB) gin.HandlerFunc {
 		// Today's orders
 		var todayOrders int
 		db.QueryRow(`
-			SELECT COUNT(*) 
-			FROM orders 
-			WHERE DATE(created_at) = CURRENT_DATE
+			SELECT COUNT(*)
+			FROM orders
+			WHERE date(created_at) = date('now')
 		`).Scan(&todayOrders)
 
 		// Today's revenue
 		var todayRevenue float64
 		db.QueryRow(`
-			SELECT COALESCE(SUM(total_amount), 0) 
-			FROM orders 
-			WHERE DATE(created_at) = CURRENT_DATE AND status = 'completed'
+			SELECT COALESCE(SUM(total_amount), 0)
+			FROM orders
+			WHERE date(created_at) = date('now') AND status = 'completed'
 		`).Scan(&todayRevenue)
 
 		// Active orders
@@ -39,9 +39,9 @@ func getDashboardStats(db *sql.DB) gin.HandlerFunc {
 		// Occupied tables
 		var occupiedTables int
 		db.QueryRow(`
-			SELECT COUNT(*) 
-			FROM dining_tables 
-			WHERE is_occupied = true
+			SELECT COUNT(*)
+			FROM dining_tables
+			WHERE is_occupied = 1
 		`).Scan(&occupiedTables)
 
 		stats["today_orders"] = todayOrders
@@ -66,26 +66,26 @@ func getSalesReport(db *sql.DB) gin.HandlerFunc {
 		switch period {
 		case "week":
 			query = `
-				SELECT DATE(created_at) as date, COUNT(*) as order_count, SUM(total_amount) as revenue
-				FROM orders 
-				WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' AND status = 'completed'
-				GROUP BY DATE(created_at)
+				SELECT date(created_at) as date, COUNT(*) as order_count, SUM(total_amount) as revenue
+				FROM orders
+				WHERE created_at >= datetime('now', '-7 days') AND status = 'completed'
+				GROUP BY date(created_at)
 				ORDER BY date DESC
 			`
 		case "month":
 			query = `
-				SELECT DATE(created_at) as date, COUNT(*) as order_count, SUM(total_amount) as revenue
-				FROM orders 
-				WHERE created_at >= CURRENT_DATE - INTERVAL '30 days' AND status = 'completed'
-				GROUP BY DATE(created_at)
+				SELECT date(created_at) as date, COUNT(*) as order_count, SUM(total_amount) as revenue
+				FROM orders
+				WHERE created_at >= datetime('now', '-30 days') AND status = 'completed'
+				GROUP BY date(created_at)
 				ORDER BY date DESC
 			`
 		default: // today
 			query = `
-				SELECT DATE_TRUNC('hour', created_at) as hour, COUNT(*) as order_count, SUM(total_amount) as revenue
-				FROM orders 
-				WHERE DATE(created_at) = CURRENT_DATE AND status = 'completed'
-				GROUP BY DATE_TRUNC('hour', created_at)
+				SELECT strftime('%Y-%m-%d %H:00:00', created_at) as hour, COUNT(*) as order_count, SUM(total_amount) as revenue
+				FROM orders
+				WHERE date(created_at) = date('now') AND status = 'completed'
+				GROUP BY strftime('%Y-%m-%d %H:00:00', created_at)
 				ORDER BY hour DESC
 			`
 		}
@@ -137,12 +137,12 @@ func getOrdersReport(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Get order statistics
 		query := `
-			SELECT 
+			SELECT
 				status,
 				COUNT(*) as count,
 				AVG(total_amount) as avg_amount
-			FROM orders 
-			WHERE DATE(created_at) = CURRENT_DATE
+			FROM orders
+			WHERE date(created_at) = date('now')
 			GROUP BY status
 		`
 
@@ -197,58 +197,58 @@ func getIncomeReport(db *sql.DB) gin.HandlerFunc {
 		switch period {
 		case "week":
 			query = `
-				SELECT 
-					DATE_TRUNC('day', created_at) as period,
+				SELECT
+					date(created_at) as period,
 					COUNT(*) as total_orders,
 					SUM(total_amount) as gross_income,
 					SUM(tax_amount) as tax_collected,
 					SUM(total_amount - tax_amount) as net_income
-				FROM orders 
-				WHERE created_at >= CURRENT_DATE - INTERVAL '7 days' 
+				FROM orders
+				WHERE created_at >= datetime('now', '-7 days')
 					AND status = 'completed'
-				GROUP BY DATE_TRUNC('day', created_at)
+				GROUP BY date(created_at)
 				ORDER BY period DESC
 			`
 		case "month":
 			query = `
-				SELECT 
-					DATE_TRUNC('day', created_at) as period,
+				SELECT
+					date(created_at) as period,
 					COUNT(*) as total_orders,
 					SUM(total_amount) as gross_income,
 					SUM(tax_amount) as tax_collected,
 					SUM(total_amount - tax_amount) as net_income
-				FROM orders 
-				WHERE created_at >= CURRENT_DATE - INTERVAL '30 days' 
+				FROM orders
+				WHERE created_at >= datetime('now', '-30 days')
 					AND status = 'completed'
-				GROUP BY DATE_TRUNC('day', created_at)
+				GROUP BY date(created_at)
 				ORDER BY period DESC
 			`
 		case "year":
 			query = `
-				SELECT 
-					DATE_TRUNC('month', created_at) as period,
+				SELECT
+					strftime('%Y-%m', created_at) as period,
 					COUNT(*) as total_orders,
 					SUM(total_amount) as gross_income,
 					SUM(tax_amount) as tax_collected,
 					SUM(total_amount - tax_amount) as net_income
-				FROM orders 
-				WHERE created_at >= CURRENT_DATE - INTERVAL '1 year' 
+				FROM orders
+				WHERE created_at >= datetime('now', '-1 year')
 					AND status = 'completed'
-				GROUP BY DATE_TRUNC('month', created_at)
+				GROUP BY strftime('%Y-%m', created_at)
 				ORDER BY period DESC
 			`
 		default: // today
 			query = `
-				SELECT 
-					DATE_TRUNC('hour', created_at) as period,
+				SELECT
+					strftime('%Y-%m-%d %H:00:00', created_at) as period,
 					COUNT(*) as total_orders,
 					SUM(total_amount) as gross_income,
 					SUM(tax_amount) as tax_collected,
 					SUM(total_amount - tax_amount) as net_income
-				FROM orders 
-				WHERE DATE(created_at) = CURRENT_DATE 
+				FROM orders
+				WHERE date(created_at) = date('now')
 					AND status = 'completed'
-				GROUP BY DATE_TRUNC('hour', created_at)
+				GROUP BY strftime('%Y-%m-%d %H:00:00', created_at)
 				ORDER BY period DESC
 			`
 		}

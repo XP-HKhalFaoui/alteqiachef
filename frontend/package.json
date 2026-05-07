@@ -3,10 +3,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port 3000 --host 0.0.0.0",
-    "build": " vite build", 
+    "dev": "vite --port 5173",
+    "build": "vite build",
     "preview": "vite preview",
-    "start": "npm run dev",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "lint:fix": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0 --fix",
     "type-check": "tsc --noEmit"
@@ -28,6 +30,7 @@
     "@tanstack/react-router": "^1.57.15",
     "@tanstack/react-table": "^8.21.3",
     "@tanstack/start": "^1.57.15",
+    "@tauri-apps/api": "^2.0.0",
     "axios": "^1.7.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -41,6 +44,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
     "@tanstack/router-devtools": "^1.57.15",
     "@tanstack/router-plugin": "^1.57.15",
     "@types/react": "^18.3.11",
